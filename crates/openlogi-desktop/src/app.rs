@@ -9,7 +9,7 @@ use gpui_component::{
     button::{Button, ButtonVariants as _},
     v_flex,
 };
-use openlogi_core::device::{Capabilities, DeviceKind};
+use openlogi_core::device::DeviceKind;
 use openlogi_ipc::InventoryHealth;
 use tracing::info;
 
@@ -91,7 +91,8 @@ impl DetailTab {
     /// The detail sections shown for `record`, in tab order. Always non-empty:
     /// every device gets at least the info tab.
     ///
-    /// Each panel is gated on the device's actual [`Capabilities`] — the HID++
+    /// Each panel is gated on the device's actual
+    /// [`Capabilities`](openlogi_core::device::Capabilities) — the HID++
     /// features it announced — not on its [`DeviceKind`]. A panel shows iff the
     /// device can do that thing, so a misclassified device can't lose its
     /// panels (issue #127). Devices we never probed (offline at startup) have no
@@ -102,9 +103,7 @@ impl DetailTab {
     /// only useful for pointer-type devices; keyboards get the Keys panel
     /// instead, even when they expose ReprogControls over HID++.
     fn tabs_for(record: &DeviceRecord) -> Vec<Self> {
-        let caps = record
-            .capabilities
-            .unwrap_or_else(|| Capabilities::presumed_from_kind(record.kind));
+        let caps = record.effective_capabilities();
         // Buttons panel is a mouse-model silhouette — only for pointer devices.
         // Keyboards get the Keys panel instead, even when they expose ReprogControls.
         let can_show_mouse_model = matches!(record.kind, DeviceKind::Mouse | DeviceKind::Trackball);

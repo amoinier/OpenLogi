@@ -95,6 +95,14 @@ impl DeviceRecord {
         DeviceKey::of_record(&self.config_key)
     }
 
+    /// The capabilities the panels gate on: measured when the device has been
+    /// probed, otherwise presumed from its kind so a sleeping mouse keeps its
+    /// (host-side) panels.
+    pub(crate) fn effective_capabilities(&self) -> Capabilities {
+        self.capabilities
+            .unwrap_or_else(|| Capabilities::presumed_from_kind(self.kind))
+    }
+
     /// Return the configuration key only when it is safe to persist settings.
     pub(super) fn persistent_config_key(&self) -> Option<&str> {
         self.persistent.then_some(self.config_key.as_str())

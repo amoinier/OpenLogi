@@ -1,10 +1,10 @@
 use super::home::{connection_icon_path, ordered_device_indices};
-use super::{Capabilities, DetailTab, DeviceKind, DeviceRecord};
+use super::{DetailTab, DeviceKind, DeviceRecord};
 use crate::services::assets::ResolvedAsset;
 use crate::ui::battery::{battery_charging_no_reading, battery_needs_attention};
 use openlogi_core::device::{
-    BatteryInfo, BatteryLevel, BatteryStatus, DeviceTransports, LightCapabilities, LightValueRange,
-    LightValueUnit,
+    BatteryInfo, BatteryLevel, BatteryStatus, Capabilities, DeviceTransports, LightCapabilities,
+    LightValueRange, LightValueUnit,
 };
 use openlogi_core::hid::DeviceRoute;
 

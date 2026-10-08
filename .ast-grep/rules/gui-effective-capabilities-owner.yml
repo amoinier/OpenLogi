@@ -1,0 +1,20 @@
+# Owner: openlogi-desktop's DeviceRecord::effective_capabilities — the
+# capabilities a panel gates on: measured when the device was probed, else
+# presumed from the record's kind.
+id: gui-effective-capabilities-owner
+language: rust
+severity: error
+message: Ask DeviceRecord::effective_capabilities() for the capabilities a panel gates on instead of presuming them from the record's kind here.
+note: |
+  The tab list, the Actions Ring panel and the mouse model each carried this
+  fallback. See "Single source of truth" in AGENTS.md.
+files:
+  - crates/openlogi-desktop/src/**/*.rs
+ignores:
+  - crates/openlogi-desktop/src/state/devices.rs
+  - "**/tests.rs"
+  - "**/tests/**"
+rule:
+  any:
+    - pattern: Capabilities::presumed_from_kind($RECORD.kind)
+    - pattern: $PATH::Capabilities::presumed_from_kind($RECORD.kind)
