@@ -670,6 +670,9 @@ pub fn cursor_position() -> Option<CursorPosition> {
 #[cfg(target_os = "macos")]
 mod macos;
 
+#[cfg(any(target_os = "macos", test))]
+mod pointer_source;
+
 #[cfg(target_os = "linux")]
 mod linux;
 
