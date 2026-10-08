@@ -14,6 +14,7 @@ use gpui_component::{
     v_flex,
 };
 use openlogi_core::binding::{Action, ButtonId, GestureDirection};
+use openlogi_core::device::{Capabilities, DeviceKind};
 
 use super::geometry::{
     LabelDistribution, asset_dimensions_for_png, asset_has_button_labels, asset_hotspots_for_png,
@@ -63,8 +64,7 @@ struct MouseWorkspaceData<'a> {
     bindings: &'a BTreeMap<ButtonId, Action>,
     gesture_maps: &'a BTreeMap<ButtonId, BTreeMap<GestureDirection, Action>>,
     glow: Option<(Arc<GlowGeometry>, Hsla)>,
-    thumbwheel: bool,
-    dpi_gestures: bool,
+    capabilities: Capabilities,
     editing_app: Option<String>,
     overridden: Option<&'a BTreeMap<ButtonId, Action>>,
 }
@@ -84,14 +84,10 @@ impl<'a> MouseWorkspaceData<'a> {
             glow: state
                 .current_record()
                 .and_then(|record| keyboard_glow(state, record)),
-            thumbwheel: state
-                .current_record()
-                .and_then(|record| record.capabilities)
-                .is_some_and(|capabilities| capabilities.thumbwheel),
-            dpi_gestures: state
-                .current_record()
-                .and_then(|record| record.capabilities)
-                .is_some_and(|capabilities| capabilities.dpi_gestures),
+            capabilities: state.current_record().map_or_else(
+                || Capabilities::presumed_from_kind(DeviceKind::Mouse),
+                DeviceRecord::effective_capabilities,
+            ),
             editing_app: state.editing_app().map(|app| {
                 state
                     .recent_app_name(app)
@@ -112,8 +108,7 @@ impl<'a> MouseWorkspaceData<'a> {
             bindings,
             gesture_maps,
             glow: None,
-            thumbwheel: false,
-            dpi_gestures: false,
+            capabilities: Capabilities::presumed_from_kind(DeviceKind::Mouse),
             editing_app: None,
             overridden: None,
         }
@@ -237,8 +232,7 @@ impl Render for MouseModelView {
             bindings,
             gesture_maps,
             glow,
-            thumbwheel,
-            dpi_gestures,
+            capabilities,
             editing_app,
             overridden,
         } = MouseWorkspaceData::read(cx)
@@ -264,7 +258,7 @@ impl Render for MouseModelView {
             mouse_h,
             hotspots,
             labels,
-        } = model_layout(asset, viewport_w, viewport_h, thumbwheel);
+        } = model_layout(asset, viewport_w, viewport_h, capabilities);
         let canvas_h = mouse_h;
 
         let highlight = self.hovered.or(active).or(self.selected);
@@ -316,7 +310,7 @@ impl Render for MouseModelView {
                 action_picker_open: self.action_picker_open,
                 bindings,
                 gesture_maps,
-                dpi_gestures,
+                dpi_gestures: capabilities.dpi_gestures,
                 editing_app: editing_app.as_deref(),
                 overridden,
             },
@@ -380,7 +374,7 @@ fn model_layout(
     asset: Option<&ResolvedAsset>,
     viewport_w: f32,
     viewport_h: f32,
-    thumbwheel: bool,
+    capabilities: Capabilities,
 ) -> ModelLayout {
     let target_h = (viewport_h - MODEL_VERTICAL_RESERVE).clamp(MODEL_MIN_H, MOUSE_MODEL_SIZE.1);
     let has_labels = asset.is_none_or(asset_has_button_labels) && viewport_w >= 960.;
@@ -398,8 +392,13 @@ fn model_layout(
         0.
     };
     let max_image_w = (content_w - left_gutter - right_gutter).max(MODEL_MIN_CONTENT_W / 2.);
-    let (mouse_w, mouse_h, hotspots, mut labels) =
-        scaled_model(asset, target_h, max_image_w, thumbwheel, label_distribution);
+    let (mouse_w, mouse_h, hotspots, mut labels) = scaled_model(
+        asset,
+        target_h,
+        max_image_w,
+        capabilities,
+        label_distribution,
+    );
     if !has_labels {
         labels.clear();
     }
@@ -416,23 +415,25 @@ fn model_layout(
 
 /// Model geometry fit inside a `max_w` × `target_h` box. With a real asset the
 /// hotspots and labels are recomputed from the scaled dimensions; the synthetic
-/// silhouette's authored coordinates are scaled by the same factor. Returns
-/// `(mouse_w, mouse_h, hotspots, labels)`.
+/// silhouette's authored coordinates are scaled by the same factor. Either way
+/// only the controls a mouse with `capabilities` delivers get a hotspot.
+/// Returns `(mouse_w, mouse_h, hotspots, labels)`.
 fn scaled_model(
     asset: Option<&ResolvedAsset>,
     target_h: f32,
     max_w: f32,
-    thumbwheel: bool,
+    capabilities: Capabilities,
     label_distribution: LabelDistribution,
 ) -> (f32, f32, Vec<Hotspot>, Vec<Label>) {
     if let Some(a) = asset {
         let (w, h) = asset_dimensions_for_png(a, target_h, max_w);
-        let hotspots = asset_hotspots_for_png(a, w, h);
+        let mut hotspots = asset_hotspots_for_png(a, w, h);
+        hotspots.retain(|hotspot| hotspot.id.delivered_by(capabilities));
         let labels = labels_from_hotspots(&hotspots, h, label_distribution);
         (w, h, hotspots, labels)
     } else {
         let scale = (target_h / MOUSE_MODEL_SIZE.1).min(max_w / MOUSE_MODEL_SIZE.0);
-        let hotspots = default_hotspots(thumbwheel)
+        let hotspots = default_hotspots(capabilities)
             .into_iter()
             .map(|hs| Hotspot {
                 x: hs.x * scale,
@@ -442,7 +443,7 @@ fn scaled_model(
                 ..hs
             })
             .collect();
-        let labels = default_labels(thumbwheel, label_distribution)
+        let labels = default_labels(capabilities, label_distribution)
             .into_iter()
             .map(|l| Label {
                 y: l.y * scale,

@@ -4,6 +4,7 @@
 //! drag in `gpui` types.
 
 use openlogi_core::binding::ButtonId;
+use openlogi_core::device::Capabilities;
 
 /// One visual target in the mouse diagram.
 ///
@@ -37,6 +38,14 @@ impl MouseControlId {
         }
     }
 
+    /// Whether a mouse with `caps` hands this control to OpenLogi. A button
+    /// asks [`Capabilities::delivers`]; thumb-wheel rotation is present
+    /// whenever the model draws it at all.
+    #[must_use]
+    pub(crate) fn delivered_by(self, caps: Capabilities) -> bool {
+        self.button().is_none_or(|button| caps.delivers(button))
+    }
+
     #[must_use]
     pub(crate) fn translation_key(self) -> &'static str {
         match self {
@@ -68,11 +77,12 @@ impl Hotspot {
     }
 }
 
-/// Fallback hotspot layout for the no-asset path (synthetic silhouette).
+/// Fallback hotspot layout for the no-asset path (synthetic silhouette),
+/// narrowed to the controls a mouse with `caps` delivers.
 /// Primary L/R click are intentionally absent — Logi doesn't expose them
 /// as remappable and we follow the same rule everywhere.
 #[must_use]
-pub fn default_hotspots(thumbwheel: bool) -> Vec<Hotspot> {
+pub fn default_hotspots(caps: Capabilities) -> Vec<Hotspot> {
     let mut hotspots = vec![
         Hotspot {
             id: ButtonId::MiddleClick.into(),
@@ -110,7 +120,7 @@ pub fn default_hotspots(thumbwheel: bool) -> Vec<Hotspot> {
             h: 80.,
         },
     ];
-    if thumbwheel {
+    if caps.thumbwheel {
         hotspots.push(Hotspot {
             id: MouseControlId::ThumbwheelRotation,
             x: 8.,
@@ -119,12 +129,22 @@ pub fn default_hotspots(thumbwheel: bool) -> Vec<Hotspot> {
             h: 70.,
         });
     }
+    hotspots.retain(|hotspot| hotspot.id.delivered_by(caps));
     hotspots
 }
 
 #[cfg(test)]
 mod tests {
+    use openlogi_core::device::DeviceKind;
+
     use super::*;
+
+    fn mouse(thumbwheel: bool) -> Capabilities {
+        Capabilities {
+            thumbwheel,
+            ..Capabilities::presumed_from_kind(DeviceKind::Mouse)
+        }
+    }
 
     #[test]
     fn active_thumbwheel_directions_share_one_control() {
@@ -141,12 +161,12 @@ mod tests {
     #[test]
     fn fallback_thumbwheel_is_capability_gated() {
         assert!(
-            !default_hotspots(false)
+            !default_hotspots(mouse(false))
                 .iter()
                 .any(|hotspot| { hotspot.id == MouseControlId::ThumbwheelRotation })
         );
         assert_eq!(
-            default_hotspots(true)
+            default_hotspots(mouse(true))
                 .iter()
                 .filter(|hotspot| hotspot.id == MouseControlId::ThumbwheelRotation)
                 .count(),
@@ -156,7 +176,7 @@ mod tests {
 
     #[test]
     fn default_hotspots_expose_the_gesture_button() {
-        let hotspots = default_hotspots(false);
+        let hotspots = default_hotspots(mouse(false));
         assert!(
             hotspots
                 .iter()
@@ -167,7 +187,7 @@ mod tests {
 
     #[test]
     fn default_hotspots_omit_primary_clicks() {
-        let hotspots = default_hotspots(false);
+        let hotspots = default_hotspots(mouse(false));
         assert!(
             !hotspots.iter().any(|h| {
                 matches!(
@@ -176,6 +196,18 @@ mod tests {
                 )
             }),
             "primary clicks are not remappable and must stay out of the model"
+        );
+    }
+
+    /// A G305 has AdjustableDpi but no ReprogControls: the silhouette must
+    /// not offer a DPI or gesture button it can never deliver.
+    #[test]
+    fn default_hotspots_without_reprog_controls_keep_only_os_hook_buttons() {
+        let g305 = Capabilities::from_feature_ids(&[0x2201, 0x8100]);
+        let ids: Vec<MouseControlId> = default_hotspots(g305).iter().map(|h| h.id).collect();
+        assert_eq!(
+            ids,
+            [ButtonId::MiddleClick, ButtonId::Back, ButtonId::Forward].map(MouseControlId::from)
         );
     }
 }

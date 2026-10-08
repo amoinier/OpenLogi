@@ -1,0 +1,30 @@
+# Owner: openlogi_assets::Metadata::legacy_markers — which G HUB-generation
+# pixel markers a depot carries, whether they were authored against the render
+# that is actually cached, and where each lands on it. The mouse model (G-key
+# hotspots) and the keyboard Keys tab (F-row callouts) both consume it.
+id: assets-legacy-markers-owner
+language: rust
+severity: error
+message: Legacy G HUB markers are openlogi_assets::Metadata::legacy_markers' call. Ask it for the markers placed on your render instead of finding the device_image entry here.
+note: |
+  The keyboard matched the render exactly, so the mouse model's copy needed a
+  tolerance for the G305's one-pixel-narrower render: two readers of one
+  schema already disagreed. See "Single source of truth" in AGENTS.md.
+files:
+  - crates/**/*.rs
+ignores:
+  - crates/openlogi-assets/src/metadata.rs
+  - "**/tests.rs"
+  - "**/tests/**"
+rule:
+  all:
+    - kind: binary_expression
+    - has:
+        field: operator
+        regex: '^(==|!=)$'
+    - has:
+        kind: field_expression
+        regex: '\.key$'
+    - has:
+        kind: string_literal
+        regex: '^"device_image"$'

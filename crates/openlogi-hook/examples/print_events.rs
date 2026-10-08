@@ -1,7 +1,8 @@
 //! Manual smoke-test for the OS-level mouse hook.
 //!
-//! Prints every mouse event to stdout and passes all events through unchanged.
-//! Press Ctrl-C to stop.
+//! Prints every mouse event except pointer motion to stdout — including the
+//! source device the backend attributed it to — and passes all events through
+//! unchanged. Press Ctrl-C to stop.
 //!
 //! # Linux permissions
 //!
@@ -16,29 +17,43 @@
 //! # log out and back in, then:
 //! cargo run --example print_events -p openlogi-hook
 //! ```
+//!
+//! # macOS permissions
+//!
+//! The terminal running the example needs Accessibility (System Settings →
+//! Privacy & Security → Accessibility). The first run asks for it.
 
-// Linux-only smoke test. A crate-level `#![cfg(target_os = "linux")]` would
-// leave an empty crate with no `main` on other targets (E0601), breaking
-// `cargo build --all-targets` there — so gate the body on `main` instead and
-// provide a trivial fallback.
-#[cfg(target_os = "linux")]
+// A crate-level `#![cfg(...)]` would leave an empty crate with no `main` on
+// other targets (E0601), breaking `cargo build --all-targets` there — so gate
+// the body on `main` instead and provide a trivial fallback.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn main() {
-    use openlogi_hook::{EventDisposition, Hook};
+    use openlogi_hook::{EventDisposition, Hook, HookEvent, MouseEvent};
 
     let hook = match Hook::start(|event| {
-        println!("{event:?}");
+        if !matches!(event, HookEvent::Mouse(MouseEvent::Moved { .. })) {
+            println!("{event:?}");
+        }
         EventDisposition::PassThrough
     }) {
         Ok(h) => h,
         Err(e) => {
+            // macOS: list the terminal under Accessibility; no-op elsewhere.
+            Hook::prompt_accessibility();
             eprintln!("error: failed to start hook: {e}");
             std::process::exit(1);
         }
     };
 
-    println!("Hook running — move the mouse or click buttons. Press Ctrl-C to stop.");
+    println!("Hook running — click buttons or scroll. Press Ctrl-C to stop.");
+    wait_for_ctrl_c();
+    hook.stop();
+    println!("Hook stopped.");
+}
 
-    // Block until Ctrl-C.
+/// Block until Ctrl-C.
+#[cfg(target_os = "linux")]
+fn wait_for_ctrl_c() {
     let (tx, rx) = std::sync::mpsc::channel();
     #[expect(
         clippy::expect_used,
@@ -49,12 +64,18 @@ fn main() {
     })
     .expect("failed to set Ctrl-C handler");
     rx.recv().ok();
-
-    hook.stop();
-    println!("Hook stopped.");
 }
 
-#[cfg(not(target_os = "linux"))]
+/// Block until Ctrl-C. The default SIGINT disposition ends the process, and
+/// macOS destroys the process-owned event tap with it.
+#[cfg(target_os = "macos")]
+fn wait_for_ctrl_c() {
+    loop {
+        std::thread::park();
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn main() {
-    eprintln!("print_events is a Linux-only smoke test (no-op on this platform).");
+    eprintln!("print_events runs on Linux and macOS only (no-op on this platform).");
 }

@@ -195,14 +195,9 @@ fn editor_input(
 
 fn current_device_supports_haptics(cx: &Context<ActionRingPanel>) -> bool {
     AppState::try_read(cx).is_some_and(|state| {
-        state.current_record().is_some_and(|record| {
-            record
-                .capabilities
-                .unwrap_or_else(|| {
-                    openlogi_core::device::Capabilities::presumed_from_kind(record.kind)
-                })
-                .haptic_feedback
-        })
+        state
+            .current_record()
+            .is_some_and(|record| record.effective_capabilities().haptic_feedback)
     })
 }
 

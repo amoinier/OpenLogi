@@ -1,10 +1,10 @@
 use super::home::{connection_icon_path, ordered_device_indices};
-use super::{Capabilities, DetailTab, DeviceKind, DeviceRecord};
+use super::{DetailTab, DeviceKind, DeviceRecord};
 use crate::services::assets::ResolvedAsset;
 use crate::ui::battery::{battery_charging_no_reading, battery_needs_attention};
 use openlogi_core::device::{
-    BatteryInfo, BatteryLevel, BatteryStatus, DeviceTransports, LightCapabilities, LightValueRange,
-    LightValueUnit,
+    BatteryInfo, BatteryLevel, BatteryStatus, Capabilities, DeviceTransports, LightCapabilities,
+    LightValueRange, LightValueUnit,
 };
 use openlogi_core::hid::DeviceRoute;
 
@@ -241,6 +241,24 @@ fn tabs_follow_capabilities_not_kind() {
     assert!(tabs.contains(&DetailTab::Buttons));
     assert!(tabs.contains(&DetailTab::Pointer));
     assert!(!tabs.contains(&DetailTab::Lighting));
+}
+
+/// A G305 announces AdjustableDpi but no ReprogControls. Its wheel and side
+/// buttons still reach the OS hook, so it keeps the Buttons tab (and the
+/// Actions Ring a side button can open).
+#[test]
+fn mouse_without_reprog_controls_keeps_buttons_tab() {
+    let caps = Some(Capabilities::from_feature_ids(&[0x2201, 0x8100]));
+    let tabs = DetailTab::tabs_for(&record(DeviceKind::Mouse, caps));
+    assert_eq!(
+        tabs,
+        vec![
+            DetailTab::Buttons,
+            DetailTab::ActionsRing,
+            DetailTab::Pointer,
+            DetailTab::Device,
+        ]
+    );
 }
 
 /// A keyboard that exposes ReprogControls (buttons=true) but has no resolved

@@ -5,11 +5,21 @@
 //! This runs inside the tap callback. Device identity comes from
 //! [`super::sender`], which caches its registry walk per device.
 
+use std::cell::RefCell;
+use std::time::Instant;
+
 use core_graphics::event::{CGEvent, CGEventField, CGEventFlags, CGEventType, EventField};
 use tracing::debug;
 
-use super::sender::{event_sender_id, sender_device_info};
-use crate::{ButtonId, KeyEvent, KeyModifiers, MouseEvent, ScrollDelta};
+use super::sender::{SenderDeviceInfo, event_sender_id, sender_device_info};
+use crate::pointer_source::PointerSource;
+use crate::{ButtonId, EventDevice, KeyEvent, KeyModifiers, MouseEvent, ScrollDelta};
+
+thread_local! {
+    /// The device driving the pointer, for the button presses macOS sends
+    /// without one. `translate` runs only on the tap thread.
+    static POINTER_SOURCE: RefCell<PointerSource> = RefCell::new(PointerSource::default());
+}
 
 /// Translate a raw OS button number to a [`ButtonId`].
 ///
@@ -26,9 +36,40 @@ fn button_number_to_id(n: i64) -> Option<ButtonId> {
     }
 }
 
-/// Best-effort device identity for a button event's HID sender.
-fn button_source(event: &CGEvent) -> Option<crate::EventDevice> {
-    event_sender_id(event).map(|id| sender_device_info(id).event_device)
+/// Best-effort device identity for a button event's HID sender, remembered
+/// as the device driving the pointer.
+fn button_source(event: &CGEvent) -> Option<EventDevice> {
+    let device = event_sender_id(event).map(|id| sender_device_info(id).event_device)?;
+    observe_pointer_source(&device);
+    Some(device)
+}
+
+/// Device identity for a middle or side button event. macOS attaches no HID
+/// event to these, so they fall back to the device driving the pointer.
+fn other_button_source(event: &CGEvent) -> Option<EventDevice> {
+    button_source(event).or_else(|| POINTER_SOURCE.with_borrow(PointerSource::inherited))
+}
+
+/// Device facts for a scroll event's HID sender, remembered as the device
+/// driving the pointer.
+fn scroll_source(event: &CGEvent) -> Option<SenderDeviceInfo> {
+    let info = sender_device_info(event_sender_id(event)?);
+    observe_pointer_source(&info.event_device);
+    Some(info)
+}
+
+fn observe_pointer_source(device: &EventDevice) {
+    POINTER_SOURCE.with_borrow_mut(|source| source.observe(device));
+}
+
+/// Follow the device moving the pointer, at most once per sample interval so
+/// the sender lookup stays off nearly all of the motion stream.
+fn sample_motion_source(event: &CGEvent) {
+    if POINTER_SOURCE.with_borrow_mut(|source| source.claim_motion_sample(Instant::now()))
+        && let Some(id) = event_sender_id(event)
+    {
+        observe_pointer_source(&sender_device_info(id).event_device);
+    }
 }
 
 /// Map the macOS modifier flags on a `CGEvent` to our [`KeyModifiers`].
@@ -119,7 +160,7 @@ pub(super) fn translate(etype: CGEventType, event: &CGEvent) -> Option<MouseEven
             button_number_to_id(n).map(|id| MouseEvent::Button {
                 id,
                 pressed: true,
-                device: button_source(event),
+                device: other_button_source(event),
             })
         }
         CGEventType::OtherMouseUp => {
@@ -127,7 +168,7 @@ pub(super) fn translate(etype: CGEventType, event: &CGEvent) -> Option<MouseEven
             button_number_to_id(n).map(|id| MouseEvent::Button {
                 id,
                 pressed: false,
-                device: button_source(event),
+                device: other_button_source(event),
             })
         }
         CGEventType::ScrollWheel => {
@@ -153,8 +194,7 @@ pub(super) fn translate(etype: CGEventType, event: &CGEvent) -> Option<MouseEven
             let phase = event.get_integer_value_field(SCROLL_PHASE) != 0
                 || event.get_integer_value_field(MOMENTUM_PHASE) != 0
                 || event.get_integer_value_field(SCROLL_COUNT) != 0;
-            let sender = event_sender_id(event);
-            let device_info = sender.map(sender_device_info);
+            let device_info = scroll_source(event);
             let from_trackpad = device_info.as_ref().map_or(phase, |info| info.is_trackpad);
             Some(MouseEvent::Scroll {
                 delta,
@@ -169,6 +209,7 @@ pub(super) fn translate(etype: CGEventType, event: &CGEvent) -> Option<MouseEven
         | CGEventType::LeftMouseDragged
         | CGEventType::RightMouseDragged
         | CGEventType::OtherMouseDragged => {
+            sample_motion_source(event);
             let dx = event.get_integer_value_field(EventField::MOUSE_EVENT_DELTA_X);
             let dy = event.get_integer_value_field(EventField::MOUSE_EVENT_DELTA_Y);
             #[expect(
