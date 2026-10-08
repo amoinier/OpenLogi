@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::binding::ButtonId;
 use crate::hid::DeviceRoute;
 
 mod light;
@@ -184,6 +185,16 @@ impl Capabilities {
             },
             _ => Self::default(),
         }
+    }
+
+    /// Whether a mouse with these capabilities hands `button` to one of
+    /// OpenLogi's capture paths. Middle, Back and Forward arrive in every
+    /// mouse's native pointer report, where the OS input hook remaps them;
+    /// every other control is captured over HID++ ReprogControls, which a
+    /// G HUB-era gaming mouse such as the G305 does not have.
+    #[must_use]
+    pub fn delivers(self, button: ButtonId) -> bool {
+        button.is_os_hook_button() || self.buttons
     }
 }
 
@@ -639,6 +650,33 @@ mod tests {
             Capabilities::presumed_from_kind(DeviceKind::Unknown),
             Capabilities::default()
         );
+    }
+
+    /// A G305 announces AdjustableDpi but no ReprogControls: its side buttons
+    /// still reach the OS hook, its DPI button reaches nothing.
+    #[test]
+    fn a_mouse_without_reprog_controls_delivers_only_os_hook_buttons() {
+        use super::Capabilities;
+        use crate::binding::ButtonId;
+        let g305 = Capabilities::from_feature_ids(&[0x0001, 0x0003, 0x1001, 0x2201, 0x8100]);
+        let delivered: Vec<ButtonId> = ButtonId::ALL
+            .into_iter()
+            .filter(|button| g305.delivers(*button))
+            .collect();
+        assert_eq!(
+            delivered,
+            [ButtonId::MiddleClick, ButtonId::Back, ButtonId::Forward]
+        );
+
+        let mx = Capabilities::from_feature_ids(&[0x1b04, 0x2201]);
+        for button in [
+            ButtonId::Back,
+            ButtonId::DpiToggle,
+            ButtonId::GestureButton,
+            ButtonId::WheelTiltLeft,
+        ] {
+            assert!(mx.delivers(button), "{button} needs only ReprogControls");
+        }
     }
 
     #[test]

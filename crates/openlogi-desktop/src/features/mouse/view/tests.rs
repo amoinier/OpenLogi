@@ -137,10 +137,18 @@ fn active_thumbwheel_directions_highlight_the_paired_control() {
     );
 }
 
+fn mouse(thumbwheel: bool) -> Capabilities {
+    Capabilities {
+        thumbwheel,
+        ..Capabilities::presumed_from_kind(DeviceKind::Mouse)
+    }
+}
+
 #[test]
 fn fallback_model_only_adds_thumbwheel_when_capability_is_measured() {
-    let (_, _, without, _) = scaled_model(None, 560., 420., false, LabelDistribution::LeftOnly);
-    let (_, _, with, _) = scaled_model(None, 560., 420., true, LabelDistribution::LeftOnly);
+    let (_, _, without, _) =
+        scaled_model(None, 560., 420., mouse(false), LabelDistribution::LeftOnly);
+    let (_, _, with, _) = scaled_model(None, 560., 420., mouse(true), LabelDistribution::LeftOnly);
     assert_eq!(
         without
             .iter()
@@ -154,4 +162,22 @@ fn fallback_model_only_adds_thumbwheel_when_capability_is_measured() {
             .count(),
         1
     );
+}
+
+/// A mouse without ReprogControls (a G305) labels exactly the buttons it
+/// delivers — no orphan card for a DPI or gesture button it never sends.
+#[test]
+fn fallback_model_labels_only_what_the_mouse_delivers() {
+    let g305 = Capabilities::from_feature_ids(&[0x2201, 0x8100]);
+    let (_, _, hotspots, labels) =
+        scaled_model(None, 560., 420., g305, LabelDistribution::BothSides);
+    let mut hotspot_ids: Vec<MouseControlId> = hotspots.iter().map(|h| h.id).collect();
+    let mut label_ids: Vec<MouseControlId> = labels.iter().map(|l| l.id).collect();
+    hotspot_ids.sort();
+    label_ids.sort();
+    assert_eq!(
+        hotspot_ids,
+        [ButtonId::MiddleClick, ButtonId::Back, ButtonId::Forward].map(MouseControlId::from)
+    );
+    assert_eq!(label_ids, hotspot_ids);
 }

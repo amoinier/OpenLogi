@@ -99,9 +99,9 @@ impl DetailTab {
     /// measured capabilities; we presume a set from their kind so a sleeping
     /// mouse still shows its (host-side) button bindings.
     ///
-    /// The Buttons panel renders a mouse-model silhouette with hotspots. It is
-    /// only useful for pointer-type devices; keyboards get the Keys panel
-    /// instead, even when they expose ReprogControls over HID++.
+    /// The Buttons panel renders a mouse-model silhouette with hotspots. Every
+    /// pointer-type device gets it, ReprogControls or not; keyboards get the
+    /// Keys panel instead, even when they expose ReprogControls over HID++.
     fn tabs_for(record: &DeviceRecord) -> Vec<Self> {
         let caps = record.effective_capabilities();
         // Buttons panel is a mouse-model silhouette — only for pointer devices.
@@ -113,10 +113,12 @@ impl DetailTab {
         if matches!(record.kind, DeviceKind::Camera) {
             tabs.push(Self::Camera);
         }
-        if caps.buttons && can_show_mouse_model {
+        // A mouse without ReprogControls (a G305) still delivers Middle, Back
+        // and Forward to the OS hook; the model shows only those.
+        if can_show_mouse_model {
             tabs.push(Self::Buttons);
         }
-        if caps.haptic_panel || (caps.buttons && can_show_mouse_model) {
+        if caps.haptic_panel || can_show_mouse_model {
             tabs.push(Self::ActionsRing);
         }
         // The Keys tab needs something to bind: HID++ controls (measured, or

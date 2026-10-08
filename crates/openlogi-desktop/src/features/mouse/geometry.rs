@@ -4,6 +4,7 @@
 //! label layout separate from the GPUI element tree in `view`.
 
 use openlogi_core::binding::ButtonId;
+use openlogi_core::device::Capabilities;
 
 use super::hotspots::{Hotspot, MOUSE_MODEL_SIZE, MouseControlId};
 use super::leader_lines::{Label, Side};
@@ -58,26 +59,67 @@ pub fn asset_dimensions_for_png(asset: &ResolvedAsset, target_h: f32, max_w: f32
 /// model reserves a side gutter for their leader-line labels); keyboards and
 /// other label-less devices don't, so the model can hand them the full width.
 pub fn asset_has_button_labels(asset: &ResolvedAsset) -> bool {
-    asset
-        .metadata
-        .assignments()
-        .any(|a| map_slot_name(&a.slot_name).is_some())
+    !asset_markers(asset).is_empty()
 }
 
-/// Convert Logitech's percent-based markers into mouse-local pixel rects,
-/// translating from the metadata's "origin" coord system (the silhouette
-/// bbox) into the actual rendered PNG coord system.
+/// Convert the asset's button markers into mouse-local pixel rects over a
+/// `mouse_w` × `mouse_h` render of its PNG.
+pub fn asset_hotspots_for_png(asset: &ResolvedAsset, mouse_w: f32, mouse_h: f32) -> Vec<Hotspot> {
+    asset_markers(asset)
+        .into_iter()
+        .map(|marker| {
+            let (cx, cy) = (marker.x_frac * mouse_w, marker.y_frac * mouse_h);
+            Hotspot {
+                id: marker.id,
+                x: cx - ASSET_HOTSPOT / 2.,
+                y: cy - ASSET_HOTSPOT / 2.,
+                w: ASSET_HOTSPOT,
+                h: ASSET_HOTSPOT,
+            }
+        })
+        .collect()
+}
+
+/// One control the asset marks, as fractions of the rendered PNG.
+struct AssetMarker {
+    id: MouseControlId,
+    x_frac: f32,
+    y_frac: f32,
+}
+
+/// Every control the asset marks: the Options+ `device_buttons_image`
+/// markers when the depot has them, otherwise the legacy G HUB G-key markers
+/// a G-series depot (the G305's) carries instead.
+fn asset_markers(asset: &ResolvedAsset) -> Vec<AssetMarker> {
+    let options_plus = options_plus_markers(asset);
+    if !options_plus.is_empty() {
+        return options_plus;
+    }
+    asset
+        .metadata
+        .legacy_markers(asset.png_width, asset.png_height)
+        .into_iter()
+        .filter_map(|marker| {
+            Some(AssetMarker {
+                id: map_g_key(marker.assignment.g_key()?)?,
+                x_frac: marker.x_frac,
+                y_frac: marker.y_frac,
+            })
+        })
+        .collect()
+}
+
+/// Translate Logitech's percent-based markers from the metadata's "origin"
+/// coord system (the silhouette bbox) into the actual rendered PNG.
 ///
 /// Logi's markers are percentages of `origin` (the silhouette bbox).
 /// Within the actual PNG, that bbox is centred with equal padding on the
 /// left and right. We render at the *PNG's* full aspect (no letterboxing)
-/// so the marker translation is:
+/// so, with `bbox = origin.width / png.width`, the marker translation is:
 ///
 /// ```text
-/// bbox_w_rendered = mouse_w * origin.width  / png.width
-/// bbox_x_offset   = (mouse_w - bbox_w_rendered) / 2
-/// hotspot.x       = bbox_x_offset + marker.x / 100 * bbox_w_rendered
-/// hotspot.y       = marker.y / 100 * mouse_h     // height ratio is 1:1
+/// x_frac = (1 - bbox) / 2 + marker.x / 100 * bbox
+/// y_frac = marker.y / 100     // height ratio is 1:1
 /// ```
 ///
 /// Primary left/right clicks deliberately have no entry — Logi never
@@ -87,42 +129,25 @@ pub fn asset_has_button_labels(asset: &ResolvedAsset) -> bool {
     clippy::cast_precision_loss,
     reason = "device images are < 4096 px on either axis — well within f32 mantissa"
 )]
-pub fn asset_hotspots_for_png(asset: &ResolvedAsset, mouse_w: f32, mouse_h: f32) -> Vec<Hotspot> {
+fn options_plus_markers(asset: &ResolvedAsset) -> Vec<AssetMarker> {
     let png_w = asset.png_width as f32;
     let origin_w = asset
         .metadata
         .origin()
         .map_or(png_w, |o| o.width as f32)
         .min(png_w);
-    let bbox_w_rendered = if png_w > 0. {
-        mouse_w * origin_w / png_w
-    } else {
-        mouse_w
-    };
-    let bbox_x_offset = (mouse_w - bbox_w_rendered) / 2.;
-    let marker_to_canvas = |mx: f32, my: f32| -> (f32, f32) {
-        let cx = bbox_x_offset + mx / 100. * bbox_w_rendered;
-        let cy = my / 100. * mouse_h;
-        (cx, cy)
-    };
-
-    let hotspots: Vec<Hotspot> = asset
+    let bbox = if png_w > 0. { origin_w / png_w } else { 1. };
+    asset
         .metadata
         .assignments()
         .filter_map(|a| {
-            let id = map_slot_name(&a.slot_name)?;
-            let (cx, cy) = marker_to_canvas(a.marker.x, a.marker.y);
-            Some(Hotspot {
-                id,
-                x: cx - ASSET_HOTSPOT / 2.,
-                y: cy - ASSET_HOTSPOT / 2.,
-                w: ASSET_HOTSPOT,
-                h: ASSET_HOTSPOT,
+            Some(AssetMarker {
+                id: map_slot_name(&a.slot_name)?,
+                x_frac: (1. - bbox) / 2. + a.marker.x / 100. * bbox,
+                y_frac: a.marker.y / 100.,
             })
         })
-        .collect();
-
-    hotspots
+        .collect()
 }
 
 /// Lay labels out evenly down one or both sides of the mouse. A two-sided
@@ -203,9 +228,9 @@ pub fn labels_from_hotspots(
 }
 
 /// Label positions for the synthetic fallback silhouette.
-pub fn default_labels(thumbwheel: bool, distribution: LabelDistribution) -> Vec<Label> {
+pub fn default_labels(caps: Capabilities, distribution: LabelDistribution) -> Vec<Label> {
     labels_from_hotspots(
-        &super::hotspots::default_hotspots(thumbwheel),
+        &super::hotspots::default_hotspots(caps),
         MOUSE_MODEL_SIZE.1,
         distribution,
     )
@@ -243,20 +268,142 @@ fn map_slot_name(name: &str) -> Option<MouseControlId> {
     }
 }
 
+/// G HUB's G-key numbering → OpenLogi's visual control IDs. A G-series mouse
+/// numbers its first five keys after the HID button each sends by default
+/// (the depot's `default_configurations.json` maps input N to mouse button
+/// N): G1/G2 are the primary clicks, left out like everywhere else, G3 the
+/// wheel, G4 the rear and G5 the front side button. G6 and up differ per
+/// model (the G305's DPI button, the G903's right-hand side pair), so they
+/// stay unmapped rather than guessed.
+fn map_g_key(key: u8) -> Option<MouseControlId> {
+    match key {
+        3 => Some(MouseControlId::Button(ButtonId::MiddleClick)),
+        4 => Some(MouseControlId::Button(ButtonId::Back)),
+        5 => Some(MouseControlId::Button(ButtonId::Forward)),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    use openlogi_assets::{Assignment, Direction, ImageEntry, Metadata, Origin, Point};
+    use openlogi_core::device::DeviceKind;
+
     use super::*;
     use crate::features::mouse::hotspots::default_hotspots;
+
+    fn mouse(thumbwheel: bool) -> Capabilities {
+        Capabilities {
+            thumbwheel,
+            ..Capabilities::presumed_from_kind(DeviceKind::Mouse)
+        }
+    }
+
+    fn assignment(slot_id: &str, slot_name: &str, x: f32, y: f32) -> Assignment {
+        Assignment {
+            slot_id: slot_id.to_owned(),
+            slot_name: slot_name.to_owned(),
+            marker: Point { x, y },
+            label: Direction::default(),
+        }
+    }
+
+    fn mouse_asset(image: ImageEntry, png: (u32, u32)) -> ResolvedAsset {
+        ResolvedAsset {
+            depot: "test".to_owned(),
+            display_name: "Test".to_owned(),
+            kind: Some(DeviceKind::Mouse),
+            image_path: PathBuf::from("/tmp/test.png"),
+            hero_image_path: None,
+            glow: None,
+            metadata: Metadata {
+                images: vec![image],
+            },
+            png_width: png.0,
+            png_height: png.1,
+        }
+    }
+
+    /// The G305 depot: G HUB G-keys in pixels of a 1400×2514 canvas, over
+    /// the black render that is one pixel narrower.
+    fn g305_asset() -> ResolvedAsset {
+        mouse_asset(
+            ImageEntry {
+                key: "device_image".to_owned(),
+                origin: Origin {
+                    width: 1400,
+                    height: 2514,
+                },
+                assignments: vec![
+                    assignment("g305_g1_m1", "", 320., 651.),
+                    assignment("g305_g2_m1", "", 1090., 651.),
+                    assignment("g305_g3_m1", "", 709., 475.),
+                    assignment("g305_g4_m1", "", 4., 1386.),
+                    assignment("g305_g5_m1", "", 13., 976.),
+                    assignment("g305_g6_m1", "", 707., 892.),
+                ],
+            },
+            (1399, 2514),
+        )
+    }
+
+    #[test]
+    fn g_hub_depots_mark_the_wheel_and_side_buttons() {
+        let asset = g305_asset();
+        assert!(asset_has_button_labels(&asset));
+        let hotspots = asset_hotspots_for_png(&asset, 1399., 2514.);
+        let ids: Vec<MouseControlId> = hotspots.iter().map(|h| h.id).collect();
+        assert_eq!(
+            ids,
+            [ButtonId::MiddleClick, ButtonId::Back, ButtonId::Forward].map(MouseControlId::from),
+            "G1/G2 are the primary clicks and G6 differs per model"
+        );
+        let (back_x, back_y) = hotspots[1].center();
+        assert!((back_x - 4. / 1400. * 1399.).abs() < 0.01);
+        assert!((back_y - 1386.).abs() < 0.01);
+        // The rear side button sits below the front one.
+        assert!(hotspots[1].center().1 > hotspots[2].center().1);
+    }
+
+    #[test]
+    fn options_plus_markers_translate_from_the_silhouette_bbox() {
+        let asset = mouse_asset(
+            ImageEntry {
+                key: "device_buttons_image".to_owned(),
+                origin: Origin {
+                    width: 800,
+                    height: 1000,
+                },
+                assignments: vec![
+                    assignment("x_c82", "SLOT_NAME_MIDDLE_BUTTON", 50., 20.),
+                    assignment("x_c83", "SLOT_NAME_BACK_BUTTON", 0., 60.),
+                ],
+            },
+            (1000, 1000),
+        );
+        let hotspots = asset_hotspots_for_png(&asset, 500., 500.);
+        // The 800 px bbox is centred in the 1000 px render: 10% padding.
+        for (hotspot, (x, y)) in hotspots.iter().zip([(250., 100.), (50., 300.)]) {
+            let (cx, cy) = hotspot.center();
+            assert!(
+                (cx - x).abs() < 0.01 && (cy - y).abs() < 0.01,
+                "{:?} centred at ({cx}, {cy}), expected ({x}, {y})",
+                hotspot.id
+            );
+        }
+    }
 
     #[test]
     fn default_labels_include_capability_gated_thumbwheel() {
         assert!(
-            !default_labels(false, LabelDistribution::LeftOnly)
+            !default_labels(mouse(false), LabelDistribution::LeftOnly)
                 .iter()
                 .any(|label| label.id == MouseControlId::ThumbwheelRotation)
         );
         assert_eq!(
-            default_labels(true, LabelDistribution::LeftOnly)
+            default_labels(mouse(true), LabelDistribution::LeftOnly)
                 .iter()
                 .filter(|label| label.id == MouseControlId::ThumbwheelRotation)
                 .count(),
@@ -303,7 +450,7 @@ mod tests {
 
     #[test]
     fn labels_track_hotspots_and_avoid_crossing() {
-        let hotspots = default_hotspots(true);
+        let hotspots = default_hotspots(mouse(true));
         let labels =
             labels_from_hotspots(&hotspots, MOUSE_MODEL_SIZE.1, LabelDistribution::LeftOnly);
         assert_eq!(labels.len(), hotspots.len());
@@ -360,7 +507,7 @@ mod tests {
 
     #[test]
     fn a_two_sided_layout_uses_both_sides() {
-        let hotspots = default_hotspots(true);
+        let hotspots = default_hotspots(mouse(true));
         let labels =
             labels_from_hotspots(&hotspots, MOUSE_MODEL_SIZE.1, LabelDistribution::BothSides);
 

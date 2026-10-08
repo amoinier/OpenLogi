@@ -243,6 +243,24 @@ fn tabs_follow_capabilities_not_kind() {
     assert!(!tabs.contains(&DetailTab::Lighting));
 }
 
+/// A G305 announces AdjustableDpi but no ReprogControls. Its wheel and side
+/// buttons still reach the OS hook, so it keeps the Buttons tab (and the
+/// Actions Ring a side button can open).
+#[test]
+fn mouse_without_reprog_controls_keeps_buttons_tab() {
+    let caps = Some(Capabilities::from_feature_ids(&[0x2201, 0x8100]));
+    let tabs = DetailTab::tabs_for(&record(DeviceKind::Mouse, caps));
+    assert_eq!(
+        tabs,
+        vec![
+            DetailTab::Buttons,
+            DetailTab::ActionsRing,
+            DetailTab::Pointer,
+            DetailTab::Device,
+        ]
+    );
+}
+
 /// A keyboard that exposes ReprogControls (buttons=true) but has no resolved
 /// asset should not get the mouse-model Buttons panel — the generic mouse
 /// hotspot layout (Middle Click, DPI Toggle, …) is wrong for a keyboard.
