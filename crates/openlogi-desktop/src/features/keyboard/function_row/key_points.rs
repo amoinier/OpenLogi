@@ -170,38 +170,20 @@ pub(super) fn key_x_fractions(asset: Option<&ResolvedAsset>) -> Vec<f32> {
 /// when the asset isn't one.
 ///
 /// Legacy `metadata*.json` files mark each F-key's cap-face centre in
-/// *absolute pixels* of the authored canvas (`origin`), not percentages. The
-/// markers only apply when that canvas is the render we actually cached —
-/// the same depot also ships marker sets authored against other variants'
-/// renders (the G513's `metadata.json` belongs to the G512 banner render) —
-/// so a depot whose `origin` doesn't match the PNG is rejected rather than
-/// misplacing every callout.
+/// *absolute pixels* of the authored canvas. The same depot also ships marker
+/// sets authored against other variants' renders (the G513's `metadata.json`
+/// belongs to the G512 banner render); [`Metadata::legacy_markers`] rejects
+/// those rather than misplacing every callout.
+///
+/// [`Metadata::legacy_markers`]: openlogi_assets::Metadata::legacy_markers
 fn legacy_pixel_key_points(asset: &ResolvedAsset) -> Option<Vec<KeyPoint>> {
-    let img = asset
+    let mut markers: Vec<KeyPoint> = asset
         .metadata
-        .images
-        .iter()
-        .find(|img| img.key == "device_image" && !img.assignments.is_empty())?;
-    if img.origin.width != asset.png_width || img.origin.height != asset.png_height {
-        return None;
-    }
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "depot image dimensions are a few thousand pixels at most"
-    )]
-    let (w, h) = (img.origin.width as f32, img.origin.height as f32);
-
-    let mut markers: Vec<KeyPoint> = img
-        .assignments
-        .iter()
-        .map(|asg| asg.marker)
-        // Percent-schema depots never exceed 100 on either axis; anything
-        // beyond is a pixel coordinate. Mixed files don't exist in the wild,
-        // but a percent marker slipping through would land off by 27x.
-        .filter(|m| m.x > 100. || m.y > 100.)
+        .legacy_markers(asset.png_width, asset.png_height)
+        .into_iter()
         .map(|m| KeyPoint {
-            x_frac: (m.x / w).clamp(0.0, 1.0),
-            y_frac: (m.y / h).clamp(0.0, 1.0),
+            x_frac: m.x_frac,
+            y_frac: m.y_frac,
         })
         .collect();
     if markers.len() < 2 || markers.len() > FunctionKey::ALL.len() - 1 {
